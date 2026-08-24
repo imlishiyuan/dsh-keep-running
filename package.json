@@ -1,0 +1,50 @@
+{
+  "name": "keep-running",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Watchdog plugin for DeepSeek Harness: on a 429/quota error, auto-resume the task via a recurring system-reminder until it succeeds.",
+  "license": "Apache-2.0",
+  "exports": "./lib/index.js",
+  "main": "./lib/index.js",
+  "files": [
+    "lib",
+    "README.md",
+    "README.zh.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "quota",
+    "rate-limit",
+    "watchdog",
+    "resume",
+    "plugin"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/schemastery": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/schemastery": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-agent": "*",
+    "@deepseek-ai/dsh-commands": "*",
+    "@deepseek-ai/dsh-llm": "*",
+    "@deepseek-ai/dsh-schedule": "*",
+    "@deepseek-ai/schemastery": "*",
+    "@types/node": "^26.2.0",
+    "typescript": "^5"
+  }
+}
