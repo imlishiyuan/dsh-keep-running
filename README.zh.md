@@ -145,15 +145,6 @@ dsh web --dump-config | grep -E "keep-running|dsh-schedule"
 
 看到 `keep-running` 和 `dsh-schedule` 行且无 `not found` 警告，即挂载成功。
 
-### 检查调度是否落盘
-
-`schedule/change` 事件不会显示在 web 对话轨迹里（它是持久化日志事件，不是消息）。要确认调度真的创建了，用工程自带脚本，不依赖模型：
-
-```sh
-node scripts/check-schedule.mjs            # 扫全部 ~/.dsh/sessions
-node scripts/check-schedule.mjs <会话目录>  # 只查指定会话
-```
-
 ## 协议
 
 [Apache-2.0](LICENSE)

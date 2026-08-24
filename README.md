@@ -148,15 +148,6 @@ dsh web --dump-config | grep -E "keep-running|dsh-schedule"
 
 Seeing the `keep-running` and `dsh-schedule` rows with no `not found` warning means they are mounted.
 
-### Check whether the schedule was persisted
-
-`schedule/change` events are not shown in the web conversation trajectory (they are durable log events, not messages). To confirm the schedule was really created, use the bundled script — it does not need the model:
-
-```sh
-node scripts/check-schedule.mjs            # scan all ~/.dsh/sessions
-node scripts/check-schedule.mjs <sessionDir>  # query one session
-```
-
 ## License
 
 [Apache-2.0](LICENSE)
