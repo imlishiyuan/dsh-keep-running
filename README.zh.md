@@ -1,9 +1,9 @@
-# keep-running
+# dsh-keep-running
 
 [English](README.md) | **简体中文**
 
-![npm version](https://img.shields.io/npm/v/keep-running)
-![license](https://img.shields.io/npm/l/keep-running)
+![npm version](https://img.shields.io/npm/v/dsh-keep-running)
+![license](https://img.shields.io/npm/l/dsh-keep-running)
 
 DeepSeek Harness 的 watchdog 插件：遇到 **配额/限流（HTTP 429）** 时，自动创建一个固定间隔的定时任务，到点持续投递「继续任务」的提示，直到任务成功或你手动接手。
 
@@ -30,11 +30,11 @@ keep-running 通过 `agent.session.append('schedule/change', ...)` 落地调度�
 ```sh
 # A. 官方命令（底层走 pnpm，需先安装 pnpm）
 npm i -g pnpm
-dsh plugin --profile web add keep-running
+dsh plugin --profile web add dsh-keep-running
 
 # B. 直接用 npm 装进 profile 目录
 cd ~/.dsh/profiles/web    # Windows: C:\Users\<你>\.dsh\profiles\web
-npm install keep-running --save
+npm install dsh-keep-running --save
 ```
 
 并在同一 profile 安装其依赖插件：
@@ -51,7 +51,7 @@ npm install @deepseek-ai/dsh-schedule --save
     - id: dsh-schedule
       name: '@deepseek-ai/dsh-schedule'
     - id: keep-running
-      name: 'keep-running'
+      name: 'dsh-keep-running'
       config:
         intervalSeconds: 1800        # 定时任务间隔（秒），最小 300
         continuePrompt: '请继续完成之前未完成的任务：{{task}}'
@@ -118,7 +118,7 @@ npm run build      # 编译 src → lib/index.js
     - id: dsh-schedule
       name: '@deepseek-ai/dsh-schedule'
     - id: keep-running
-      name: 'file:///D:/ui-workspace/keep-running/lib/index.js'
+      name: 'file:///D:/ui-workspace/dsh-keep-running/lib/index.js'
       config:
         intervalSeconds: 1800
 ```

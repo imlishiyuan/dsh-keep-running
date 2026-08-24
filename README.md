@@ -1,9 +1,9 @@
-# keep-running
+# dsh-keep-running
 
 **English** | [简体中文](README.zh.md)
 
-![npm version](https://img.shields.io/npm/v/keep-running)
-![license](https://img.shields.io/npm/l/keep-running)
+![npm version](https://img.shields.io/npm/v/dsh-keep-running)
+![license](https://img.shields.io/npm/l/dsh-keep-running)
 
 A watchdog plugin for DeepSeek Harness: on a **quota / rate-limit (HTTP 429)** error, it automatically creates a fixed-interval scheduled task that keeps delivering a "continue the task" prompt until it succeeds or you take over.
 
@@ -30,11 +30,11 @@ keep-running persists schedules via `agent.session.append('schedule/change', ...
 ```sh
 # A. Official command (backs onto pnpm; install pnpm first)
 npm i -g pnpm
-dsh plugin --profile web add keep-running
+dsh plugin --profile web add dsh-keep-running
 
 # B. Install with npm directly into the profile directory
 cd ~/.dsh/profiles/web    # Windows: C:\Users\<you>\.dsh\profiles\web
-npm install keep-running --save
+npm install dsh-keep-running --save
 ```
 
 And install its dependency plugin into the same profile:
@@ -54,7 +54,7 @@ npm install @deepseek-ai/dsh-schedule --save
     - id: dsh-schedule
       name: '@deepseek-ai/dsh-schedule'
     - id: keep-running
-      name: 'keep-running'
+      name: 'dsh-keep-running'
       config:
         intervalSeconds: 1800        # task interval (seconds), min 300
         continuePrompt: '请继续完成之前未完成的任务：{{task}}'
@@ -121,7 +121,7 @@ During development you can mount the compiled output via a `file://` URL (still 
     - id: dsh-schedule
       name: '@deepseek-ai/dsh-schedule'
     - id: keep-running
-      name: 'file:///D:/ui-workspace/keep-running/lib/index.js'
+      name: 'file:///D:/ui-workspace/dsh-keep-running/lib/index.js'
       config:
         intervalSeconds: 1800
 ```

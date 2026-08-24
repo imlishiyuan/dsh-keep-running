@@ -1,5 +1,5 @@
 {
-  "name": "keep-running",
+  "name": "dsh-keep-running",
   "version": "0.1.0",
   "type": "module",
   "description": "Watchdog plugin for DeepSeek Harness: on a 429/quota error, auto-resume the task via a recurring system-reminder until it succeeds.",
