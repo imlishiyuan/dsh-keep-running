@@ -7,7 +7,7 @@
 
 A watchdog plugin for DeepSeek Harness: on a **quota / rate-limit (HTTP 429)** error, it automatically creates a fixed-interval scheduled task that keeps delivering a "continue the task" prompt until it succeeds or you take over.
 
-> **Depends on the official scheduled-task plugin.** This plugin persists schedules via the events provided by `@deepseek-ai/dsh-schedule`, so **you must mount it first** — otherwise schedule creation is silently dropped (see [Dependency](#dependency)).
+> **Depends on the official scheduled-task plugin.** This plugin creates and deletes schedules through the `ctx.schedule` service provided by `@deepseek-ai/dsh-schedule`, so **you must mount it first** — otherwise keep-running cannot register without that required service (see [Dependency](#dependency)).
 
 ## Features
 
@@ -21,7 +21,9 @@ A watchdog plugin for DeepSeek Harness: on a **quota / rate-limit (HTTP 429)** e
 
 > ⚠️ **You must** mount the official scheduled-task plugin `@deepseek-ai/dsh-schedule`.
 
-keep-running persists schedules via `agent.session.append('schedule/change', ...)`. The `schedule/change` event type and its runtime are **provided by `@deepseek-ai/dsh-schedule`**. If you mount only keep-running without it, `append` is **rejected by the Session as an unknown event type** → keep-running **fails silently** and no schedule is created (the most common "it didn't work" cause).
+keep-running declares `inject: ['commands', 'schedule']` and creates, reads, and deletes schedules through the `ctx.schedule` service, which is **registered by `@deepseek-ai/dsh-schedule`**. Mounting keep-running without it leaves the required service missing, so the plugin cannot register and the watchdog never works (the most common "it didn't work" cause).
+
+> **Changed in DSH 0.1.7.** Schedules no longer live in the session log's `schedule/change` events; Host storage owns them and `ctx.schedule` is the only supported read/write path. Appending `schedule/change` directly is no longer a supported write.
 
 ## Quick Start
 
@@ -87,13 +89,13 @@ The plugin registers its own namespaced `/keep-running` command (it does not col
 - `/keep-running list` — list all **active** keep-running tasks in the **current** session (id, interval, breakpoint, next tick).
 - `/keep-running cancel <id>` — cancel the task with that id (id from the `list` output).
 
-The command reads the session's `schedule/change` events directly, **without needing the model**, so it works even while quota is exhausted.
+The command reads the `ctx.schedule` task list directly, **without needing the model**, so it works even while quota is exhausted.
 
 ## How it works
 
 1. Listen to `agent/error`: a quota 429 is rejected the moment the request is sent, so it flows through `step()`→`turn()`'s `catch`→`throwError()` and **never reaches** the `agent/request-error` waterfall (that fires only on a streaming `error` finish). The event that actually fires is the global `agent/error`, whose `payload.error.failure` is the `LlmFailure` carrying `status`.
 2. `isQuotaError` detects quota: HTTP 429, stable codes (`RATE_LIMIT` / `QUOTA`), or quota signals in code/message, plus `quotaKeywords`.
-3. `ensureWatchdog` appends `schedule/change` (`kind: 'every'`) to create the schedule; an `active` guard prevents duplicates, and a session scan recovers across process restarts.
+3. `ensureWatchdog` calls `ctx.schedule.create(..., { title: 'keep-running', every_seconds })` to create the schedule; an `active` guard prevents duplicates, and a task-list query recovers across process restarts.
 4. Each tick delivers `continuePrompt`; when any turn closes normally (quota recovered) `turn-stopping` → `stopWatchdog` deletes it.
 
 ## Use cases

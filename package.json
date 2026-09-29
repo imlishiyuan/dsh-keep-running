@@ -27,6 +27,7 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-schedule": "*",
     "@deepseek-ai/schemastery": "*"
   },
   "peerDependenciesMeta": {
@@ -39,12 +40,20 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "*",
-    "@deepseek-ai/dsh-agent": "*",
-    "@deepseek-ai/dsh-commands": "*",
-    "@deepseek-ai/dsh-llm": "*",
-    "@deepseek-ai/dsh-schedule": "*",
+    "@deepseek-ai/dsh-agent": "^0.1.7-rc.2",
+    "@deepseek-ai/dsh-commands": "^0.1.7-rc.2",
+    "@deepseek-ai/dsh-llm": "^0.1.7-rc.2",
+    "@deepseek-ai/dsh-schedule": "^0.1.7-rc.2",
     "@deepseek-ai/schemastery": "*",
     "@types/node": "^26.2.0",
     "typescript": "^5"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/imlishiyuan/dsh-keep-running.git"
+  },
+  "homepage": "https://github.com/imlishiyuan/dsh-keep-running#readme",
+  "bugs": {
+    "url": "https://github.com/imlishiyuan/dsh-keep-running/issues"
   }
 }

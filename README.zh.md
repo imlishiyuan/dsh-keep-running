@@ -7,7 +7,7 @@
 
 DeepSeek Harness 的 watchdog 插件：遇到 **配额/限流（HTTP 429）** 时，自动创建一个固定间隔的定时任务，到点持续投递「继续任务」的提示，直到任务成功或你手动接手。
 
-> **依赖官方定时任务插件。** 本插件基于 `@deepseek-ai/dsh-schedule` 提供的事件落地，**必须先挂载它**，否则调度创建会被静默丢弃（见 [依赖](#依赖)）。
+> **依赖官方定时任务插件。** 本插件通过 `@deepseek-ai/dsh-schedule` 提供的 `ctx.schedule` 服务增删调度，**必须先挂载它**，否则 keep-running 缺少必需服务、无法注册（见 [依赖](#依赖)）。
 
 ## 功能
 
@@ -21,7 +21,9 @@ DeepSeek Harness 的 watchdog 插件：遇到 **配额/限流（HTTP 429）** �
 
 > ⚠️ **必须**挂载官方定时任务插件 `@deepseek-ai/dsh-schedule`。
 
-keep-running 通过 `agent.session.append('schedule/change', ...)` 落地调度。而 `schedule/change` 事件类型与对应运行时**由 `@deepseek-ai/dsh-schedule` 提供**。若只挂 keep-running 而不挂它，`append` 会被 Session 当作**未知事件类型拒绝** → keep-running **静默失败**，调度不会创建（这是最常见的「没生效」原因）。
+keep-running 声明 `inject: ['commands', 'schedule']`，通过 `ctx.schedule` 服务创建、查询与删除调度，而 `ctx.schedule` **由 `@deepseek-ai/dsh-schedule` 注册**。只挂 keep-running 而不挂它时必需服务缺失，插件无法注册，看门狗不会工作（这是最常见的「没生效」原因）。
+
+> **DSH 0.1.7 起的变化。** 调度不再存放在会话日志的 `schedule/change` 事件里，改由 Host 存储承载，并且只能经 `ctx.schedule` 读写；直接 `agent.session.append('schedule/change', ...)` 已不是受支持的写入路径。
 
 ## 快速开始
 
@@ -84,13 +86,13 @@ config:
 - `/keep-running list` —— 列出**当前会话**所有活跃的 keep-running 定时任务（id、间隔、断点、下次时间）。
 - `/keep-running cancel <id>` —— 取消指定 id 的定时任务（`id` 从 `list` 结果取）。
 
-命令直接读会话的 `schedule/change` 事件，**不依赖大模型**，配额耗尽时也能用。
+命令直接查 `ctx.schedule` 的调度表，**不依赖大模型**，配额耗尽时也能用。
 
 ## 工作原理
 
 1. 监听 `agent/error`：DeepSeek/OpenAI 的配额 429 在**请求一建立**就被拒，走 `step()`→`turn()` 的 `catch`→`throwError()`，**不触发** `agent/request-error` waterfall（它只在流式 `error` finish 时触发）。真正 emit 的是全局 `agent/error`，其 `payload.error.failure` 才是带 `status` 的 `LlmFailure`。
 2. `isQuotaError` 识别配额：HTTP 429、`RATE_LIMIT`/`QUOTA` 稳定 code，或 code/message 里的配额信号，再叠加 `quotaKeywords`。
-3. `ensureWatchdog` 追加 `schedule/change`（`kind:'every'`）创建调度；`active` 守卫防重复，并扫描会话做跨进程恢复。
+3. `ensureWatchdog` 调用 `ctx.schedule.create(..., { title: 'keep-running', every_seconds })` 创建调度；`active` 守卫防重复，并查询调度表做跨进程恢复。
 4. 到点投递 `continuePrompt`；任一 turn 正常关闭（配额恢复）时 `turn-stopping` → `stopWatchdog` 停止。
 
 ## 使用场景

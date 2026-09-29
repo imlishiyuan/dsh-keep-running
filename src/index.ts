@@ -3,14 +3,14 @@ import type { CommandInvocation, CommandResult } from '@deepseek-ai/dsh-commands
 import type {} from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { LlmFailure } from '@deepseek-ai/dsh-llm'
-import type {} from '@deepseek-ai/dsh-schedule'
-import { ScheduleId } from '@deepseek-ai/dsh-schedule'
+import type { ScheduleRecord } from '@deepseek-ai/dsh-schedule'
 import z from '@deepseek-ai/schemastery'
-import { randomUUID } from 'node:crypto'
 
 export const name = 'keep-running'
 
-export const inject = ['commands']
+// 'schedule' 是 DSH 0.1.7 起的唯一调度入口：看门狗通过 ctx.schedule 增删，
+// 不再直接向会话日志 append 'schedule/change'。
+export const inject = ['commands', 'schedule']
 
 /** 插件配置。 */
 export interface Config {
@@ -28,23 +28,16 @@ export const Config: z<Config> = z.object({
   quotaKeywords: z.array(z.string()).default([]),
 })
 
-type ScheduleIdType = ReturnType<typeof ScheduleId>
-
-/** 本插件创建的一些调度 id 前缀，用于跨进程恢复识别。 */
-const WATCHDOG_PREFIX = 'keep-running'
-
-/** 一个 agent 的 watchdog 状态。 */
-interface Watchdog {
-  scheduleId: ScheduleIdType
-}
+/** 本插件创建的看门狗统一使用这个任务名，用于在调度表里认出自己。 */
+const WATCHDOG_TITLE = 'keep-running'
 
 export function apply(ctx: Context, config: Config): void {
   const intervalSeconds = config.intervalSeconds ?? 1800
   const continuePrompt = config.continuePrompt ?? '请继续完成之前未完成的任务：{{task}}'
   const quotaKeywords = config.quotaKeywords ?? []
 
-  // 每个 agent 是否已有一个活跃的 watchdog 调度。重复 429 时靠它避免重复创建。
-  const active = new WeakMap<Agent, Watchdog>()
+  // 每个 agent 当前活跃的看门狗记录，用于避免重复创建。
+  const active = new WeakMap<Agent, ScheduleRecord>()
 
   // 监听「agent/error」而非「agent/request-error」：
   // DeepSeek/OpenAI 的配额 429 在「请求一建立」就被 HTTP 429 拒绝，走 step()->turn() 的
@@ -55,31 +48,31 @@ export function apply(ctx: Context, config: Config): void {
     const failure = extractFailure(error)
     if (failure !== undefined && isQuotaError(failure, quotaKeywords)) {
       // 断点：取最近一条真实用户消息作为「当时在做什么」。
-      void ensureWatchdog(agent, intervalSeconds, continuePrompt, breakpoint(agent), active)
+      void ensureWatchdog(ctx, agent, intervalSeconds, continuePrompt, breakpoint(agent), active)
       // 配额耗尽：不立即重试（会再次 429）。让本轮以失败结束，由 watchdog 后续自动恢复。
-      // ensureWatchdog 的 active 守卫 + 会话恢复都会避免重复创建。
+      // ensureWatchdog 的 active 守卫 + 调度表查询都会避免重复创建。
     }
   })
 
   // Phase 2 — 成功检测停止 + 手动接手停止：
   // 任一 turn 正常关闭（无 429，即配额已恢复）→ 停止 watchdog。
   ctx.on('agent/turn-stopping', ({ agent }) => {
-    void stopWatchdog(agent, active)
+    void stopWatchdog(ctx, agent, active)
   })
 
   // Phase 3 — 「不活动才触发」：
-  // schedule 运行时用 agent.runMaintenance() 投递，仅在 agent 空闲阶段执行；
+  // 调度运行时用 agent.runMaintenance() 投递，仅在 agent 空闲阶段执行；
   // agent 活跃（用户手动干活）时 runMaintenance 会 reject 并 waitForIdle()，不会投递 continue。
-  // 所以"仅在空闲时继续"由 schedule 运行时天然保证，插件无需额外 gate。
+  // 所以"仅在空闲时继续"由调度运行时天然保证，插件无需额外 gate。
 
-  // Phase 4 — 快捷命令（独立命名空间，避免与未来可能的 /schedule 命令冲突）：
+  // Phase 4 — 快捷命令（独立命名空间，避免与 /schedule 命令冲突）：
   // /keep-running list            列出本会话所有活跃的 keep-running 定时任务
   // /keep-running cancel <id>     取消指定 id 的定时任务
   ctx.commands.register({
     name: 'keep-running',
     description: '查看或取消本会话的 keep-running 定时任务',
     input: { hint: 'list | cancel <id>' },
-    handler: handleCommand,
+    handler: invocation => handleCommand(ctx, invocation),
   })
 }
 
@@ -110,50 +103,48 @@ function isQuotaError(failure: LlmFailure, keywords: string[]): boolean {
 
 /** 若无活跃 watchdog，则创建一个固定间隔的「every」调度，到点投递 continuePrompt。 */
 async function ensureWatchdog(
+  ctx: Context,
   agent: Agent,
   intervalSeconds: number,
   prompt: string,
   task: string,
-  active: WeakMap<Agent, Watchdog>,
+  active: WeakMap<Agent, ScheduleRecord>,
 ): Promise<void> {
   if (active.has(agent)) return
-  // 跨进程重启恢复：会话里可能已有一个本插件创建的活跃调度，复用而不重复建。
-  const existing = findActiveWatchdog(agent)
+  // 跨进程重启恢复：调度表里可能已有一个本插件的活跃任务，复用而不重复建。
+  const existing = (await listWatchdogs(ctx, agent))[0]
   if (existing !== undefined) {
-    active.set(agent, { scheduleId: existing })
+    active.set(agent, existing)
     return
-  }
-  const id = ScheduleId(`${WATCHDOG_PREFIX}-${randomUUID()}`)
-  const schedule = {
-    id,
-    kind: 'every' as const,
-    prompt: prompt.replaceAll('{{task}}', task),
-    everySeconds: intervalSeconds,
-    scheduledAt: new Date(Date.now() + intervalSeconds * 1000).toISOString(),
   }
   try {
-    agent.session.append('schedule/change', {
-      version: 1,
-      operation: 'create' as const,
-      schedule,
+    const record = await ctx.schedule.create(agent.session.id, {
+      title: WATCHDOG_TITLE,
+      prompt: prompt.replaceAll('{{task}}', task),
+      every_seconds: intervalSeconds,
     })
+    active.set(agent, record)
   } catch {
-    // append 失败时不标记为已创建，让下一次 429 重试。
+    // 创建失败（规则校验、持久化失败）时不标记为已创建，让下一次配额错误重试。
     return
   }
-  active.set(agent, { scheduleId: id })
 }
 
 /** 删除 watchdog 调度（任务成功或用户手动接手时调用）。 */
-async function stopWatchdog(agent: Agent, active: WeakMap<Agent, Watchdog>): Promise<void> {
-  const watchdog = active.get(agent)
-  if (watchdog === undefined) return
-  agent.session.append('schedule/change', {
-    version: 1,
-    operation: 'delete' as const,
-    id: watchdog.scheduleId,
-  })
+async function stopWatchdog(
+  ctx: Context,
+  agent: Agent,
+  active: WeakMap<Agent, ScheduleRecord>,
+): Promise<void> {
+  const record = active.get(agent)
+  if (record === undefined) return
   active.delete(agent)
+  try {
+    await ctx.schedule.delete({ sessionId: agent.session.id, id: record.id })
+  } catch {
+    // 删除失败时保持未跟踪状态；下一次配额错误会经 listWatchdogs 重新发现该任务。
+    return
+  }
 }
 
 /** 断点细化：从会话里取最近一条「真实用户消息」作为断点描述（过滤掉注入的 system-reminder/plugin 上下文）。 */
@@ -172,90 +163,50 @@ function breakpoint(agent: Agent): string {
   return '继续未完成的任务'
 }
 
-/** 扫描会话事件，找出是否已存在一个活跃的 keep-running 调度（create 无对应 delete）。
- *  用于跨进程重启后恢复 active 状态，避免重复创建。 */
-function findActiveWatchdog(agent: Agent): ScheduleIdType | undefined {
-  const activeIds = new Set<string>()
-  for (const event of agent.session.events) {
-    if (event.type !== 'schedule/change') continue
-    const data = event.data as unknown as Record<string, unknown>
-    if (data['version'] !== 1) continue
-    if (data['operation'] === 'create') {
-      const schedule = data['schedule'] as Record<string, unknown> | undefined
-      const id = schedule?.['id']
-      if (typeof id === 'string' && id.startsWith(WATCHDOG_PREFIX)) activeIds.add(id)
-    } else if (data['operation'] === 'delete') {
-      const id = data['id']
-      if (typeof id === 'string') activeIds.delete(id)
-    }
+/** 读取本会话中由本插件创建的活跃调度。查询失败时返回空列表，让调用方按「无看门狗」处理。 */
+async function listWatchdogs(ctx: Context, agent: Agent): Promise<ScheduleRecord[]> {
+  let records: ScheduleRecord[]
+  try {
+    records = await ctx.schedule.list({ sessionId: agent.session.id })
+  } catch {
+    return []
   }
-  for (const id of activeIds) if (id.startsWith(WATCHDOG_PREFIX)) return id as ScheduleIdType
-  return undefined
+  return records.filter(record => record.title === WATCHDOG_TITLE)
 }
 
-/** 一个活跃 keep-running 调度的可读信息。 */
-interface WatchdogInfo {
-  id: ScheduleIdType
-  everySeconds: number
-  prompt: string
-  scheduledAt: string
-}
-
-/** 扫描会话事件，返回当前会话所有「活跃」的 keep-running 调度（create 无对应 delete）。 */
-function listWatchdogs(agent: Agent): WatchdogInfo[] {
-  const byId = new Map<string, WatchdogInfo>()
-  for (const event of agent.session.events) {
-    if (event.type !== 'schedule/change') continue
-    const data = event.data as unknown as Record<string, unknown>
-    if (data['version'] !== 1) continue
-    if (data['operation'] === 'create') {
-      const schedule = data['schedule'] as Record<string, unknown> | undefined
-      const id = schedule?.['id']
-      if (typeof id !== 'string' || !id.startsWith(WATCHDOG_PREFIX)) continue
-      byId.set(id, {
-        id: id as ScheduleIdType,
-        everySeconds: typeof schedule?.['everySeconds'] === 'number' ? schedule['everySeconds'] : 0,
-        prompt: typeof schedule?.['prompt'] === 'string' ? schedule['prompt'] : '',
-        scheduledAt: typeof schedule?.['scheduledAt'] === 'string' ? schedule['scheduledAt'] : '',
-      })
-    } else if (data['operation'] === 'delete') {
-      const id = data['id']
-      if (typeof id === 'string') byId.delete(id)
-    }
-  }
-  return [...byId.values()]
+/** 渲染一条调度的可读摘要。 */
+function describeWatchdog(record: ScheduleRecord): string {
+  const timing = record.kind === 'every' ? `every=${record.everySeconds}s` : `kind=${record.kind}`
+  return `- ${record.id}\n    ${timing}  下次约 ${record.scheduledAt}\n    prompt=${record.prompt}`
 }
 
 /** `/keep-running` 命令入口：分发 list / cancel 子命令。 */
-function handleCommand(invocation: CommandInvocation): CommandResult {
+async function handleCommand(ctx: Context, invocation: CommandInvocation): Promise<CommandResult> {
   const input = invocation.rawInput.trim()
-  if (input.length === 0 || input.toLowerCase() === 'list') return listResult(invocation.agent)
+  if (input.length === 0 || input.toLowerCase() === 'list') return listResult(ctx, invocation.agent)
   const cancel = /^cancel(?:\s+(.+))?$/iu.exec(input)
-  if (cancel !== null) return cancelResult(invocation.agent, cancel[1]?.trim() ?? '')
+  if (cancel !== null) return cancelResult(ctx, invocation.agent, cancel[1]?.trim() ?? '')
   return { kind: 'error', text: '用法：/keep-running list 或 /keep-running cancel <id>' }
 }
 
 /** 列出当前会话所有活跃的 keep-running 调度。 */
-function listResult(agent: Agent): CommandResult {
-  const list = listWatchdogs(agent)
+async function listResult(ctx: Context, agent: Agent): Promise<CommandResult> {
+  const list = await listWatchdogs(ctx, agent)
   if (list.length === 0) return { kind: 'success', text: '当前会话没有活跃的 keep-running 定时任务。' }
-  const body = list.map(w =>
-    `- ${w.id}\n    every=${w.everySeconds}s  下次约 ${w.scheduledAt}\n    prompt=${w.prompt}`,
-  ).join('\n')
+  const body = list.map(describeWatchdog).join('\n')
   return { kind: 'success', text: `当前会话有 ${list.length} 个活跃的 keep-running 定时任务：\n${body}` }
 }
 
 /** 取消指定 id 的 keep-running 调度。 */
-function cancelResult(agent: Agent, id: string): CommandResult {
+async function cancelResult(ctx: Context, agent: Agent, id: string): Promise<CommandResult> {
   if (id.length === 0) return { kind: 'error', text: '用法：/keep-running cancel <id>' }
-  const target = listWatchdogs(agent).find(w => w.id === id)
-  if (target === undefined) return { kind: 'error', text: `未找到活跃调度：${id}（可用 /keep-running list 查看）` }
+  const target = (await listWatchdogs(ctx, agent)).find(record => String(record.id) === id)
+  if (target === undefined) {
+    return { kind: 'error', text: `未找到活跃调度：${id}（可用 /keep-running list 查看）` }
+  }
   try {
-    agent.session.append('schedule/change', {
-      version: 1,
-      operation: 'delete' as const,
-      id: ScheduleId(id),
-    })
+    const result = await ctx.schedule.delete({ sessionId: agent.session.id, id: target.id })
+    if (!result.deleted) return { kind: 'error', text: `取消失败：${id}` }
   } catch {
     return { kind: 'error', text: `取消失败：${id}` }
   }
