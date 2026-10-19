@@ -10,7 +10,8 @@
     "lib",
     "README.md",
     "README.zh.md",
-    "LICENSE"
+    "LICENSE",
+    "cordis.patch.yml"
   ],
   "keywords": [
     "deepseek-harness",
@@ -58,5 +59,10 @@
   "homepage": "https://github.com/imlishiyuan/dsh-keep-running#readme",
   "bugs": {
     "url": "https://github.com/imlishiyuan/dsh-keep-running/issues"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
   }
 }
